@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <time.h>
 #include "bcmGPIO.c"
-#include <stdio.h>
 
 #define TESTING_PC 0
 #define DEBUG 0
@@ -57,6 +56,7 @@ unsigned *headerInstructionRegister;
 unsigned *tailDataRegister;
 unsigned *tailInstructionRegister;
 double completesleeptime = 0.0;
+unsigned looping = 0;
 
 void changeState(unsigned tms)
 {
@@ -282,31 +282,34 @@ char *stateToString(state currentState)
 
 unsigned clockJTAG(unsigned tms, unsigned tdi)
 {
-	//1-0
-	writeGPIO(TCK,0);
-	delayMicroseconds(sleepTimeHalf);
-	unsigned tdo = readGPIO(TDO);
-	//0-1
 	writeGPIO(TMS,tms);
 	writeGPIO(TDI,tdi);
+	//1-0-1
+	writeGPIO(TCK,0);
+	delayMicroseconds(sleepTimeHalf);
+	writeGPIO(TCK,1);
 	delayMicroseconds(sleepTimeHalf);
 
-	writeGPIO(TCK,1);
+	//unsigned tdo = readGPIO(TDO);
+
     changeState(tms);
-	return tdo;
+
+	//printf("[TMS:%d, TDI:%d, TDO_LINE:%d]\n", tms, tdi, tdo);
+
+	return readGPIO(TDO);
 }
 
 unsigned shiftJTAG(unsigned tdi)
 {
-	//1-0
+	writeGPIO(TMS,0);
+	writeGPIO(TDI,tdi);
+	//1-0-1
 	writeGPIO(TCK,0);
 	delayMicroseconds(sleepTimeHalf);
-	unsigned tdo = readGPIO(TDO);
-	//0-1
-	writeGPIO(TDI,tdi);
+	writeGPIO(TCK,1);
 	delayMicroseconds(sleepTimeHalf);
 
-	writeGPIO(TCK,1);
+	unsigned tdo = readGPIO(TDO);
 	return tdo;
 }
 
@@ -318,7 +321,7 @@ void resetJTAG()
 	}
 }
 
-void moveToState(state destination)
+unsigned moveToState(state destination)
 {
 	switch(currentState)
 	{
@@ -357,6 +360,9 @@ void moveToState(state destination)
 					clockJTAG(0,0);
 					clockJTAG(1,0);
 					clockJTAG(0,0);
+					break;
+				default:
+					return 0;
 			}
 			break;
 		case IDLE:
@@ -392,6 +398,9 @@ void moveToState(state destination)
 					clockJTAG(0,0);
 					clockJTAG(1,0);
 					clockJTAG(0,0);
+					break;
+				default:
+					return 0;
 			}
 			break;
 		case SHIFTDR:
@@ -431,6 +440,9 @@ void moveToState(state destination)
 					clockJTAG(0,0);
 					clockJTAG(1,0);
 					clockJTAG(0,0);
+					break;
+				default:
+					return 0;
 			}
 			break;
 		case SHIFTIR:
@@ -468,7 +480,9 @@ void moveToState(state destination)
 				case IRPAUSE:
 					clockJTAG(1,0);
 					clockJTAG(0,0);
-
+					break;
+				default:
+					return 0;
 			}
 			break;
 		case DRPAUSE:
@@ -508,6 +522,9 @@ void moveToState(state destination)
 					clockJTAG(0,0);
 					clockJTAG(1,0);
 					clockJTAG(0,0);
+					break;
+				default:
+					return 0;
 			}
 			break;
 		case IRPAUSE:
@@ -546,8 +563,14 @@ void moveToState(state destination)
 					break;
 				case IRPAUSE:
 					break;
+				default:
+					return 0;
 			}
+			break;
+		default:
+			return 0;
 	}
+	return 1;
 }
 
 unsigned shiftDataRegister(int bits, unsigned *tdi, unsigned *tdo, unsigned *mask)
@@ -587,9 +610,17 @@ unsigned shiftDataRegister(int bits, unsigned *tdi, unsigned *tdo, unsigned *mas
 			{
 				if (data[i] != tdo[i])
 				{
-                    free(tdi);
+					if (!looping)
+					{
+	                    free(tdi);
+						free(tdo);
+						return 0;
+					}
+				}
+				else if (looping && data[0] == tdo[0])
+				{
+					looping = 0;
 					free(tdo);
-					return 0;
 				}
 			}
 		}
@@ -621,7 +652,7 @@ unsigned shiftInstructionRegister(int bits, unsigned *tdi, unsigned *tdo, unsign
 				{
 					if (data[i] != tdo[i])
 					{
-                        free(tdi);
+					    free(tdi);
 						free(tdo);
 						free(mask);
 						return 0;
@@ -646,62 +677,78 @@ unsigned shiftInstructionRegister(int bits, unsigned *tdi, unsigned *tdo, unsign
 	return 1;
 }
 
-void setHeaderDataRegister(int bits, unsigned *pattern)
+unsigned setHeaderDataRegister(int bits, unsigned *pattern)
 {
 	headerDataRegister = realloc(headerDataRegister, sizeof *headerDataRegister * bits);
+	if (!headerDataRegister)
+		return 0;
 	for (int i = 0; i < bits; i++)
 	{
 		headerDataRegister[i] = pattern[i];
 	}
+	return 1;
 }
 
-void setHeaderInstructionRegister(int bits, unsigned *pattern)
+unsigned setHeaderInstructionRegister(int bits, unsigned *pattern)
 {
 	headerInstructionRegister = realloc(headerInstructionRegister, sizeof *headerInstructionRegister * bits);
+	if (!headerInstructionRegister)
+		return 0;
 	for (int i = 0; i < bits; i++)
 	{
 		headerInstructionRegister[i] = pattern[i];
 	}
+	return 1;
 }
 
-void setTailDataRegister(int bits, unsigned *pattern)
+unsigned setTailDataRegister(int bits, unsigned *pattern)
 {
 	tailDataRegister = realloc(tailDataRegister, sizeof *tailDataRegister * bits);
+	if (!tailDataRegister)
+		return 0;
 	for (int i = 0; i < bits; i++)
 	{
 		tailDataRegister[i] = pattern[i];
 	}
+	return 1;
 }
 
-void setTailInstructionRegister(int bits, unsigned *pattern)
+unsigned setTailInstructionRegister(int bits, unsigned *pattern)
 {
 	tailInstructionRegister = realloc(tailInstructionRegister, sizeof *tailInstructionRegister * bits);
+	if (!tailInstructionRegister)
+		return 0;
 	for (int i = 0; i < bits; i++)
 	{
 		tailInstructionRegister[i] = pattern[i];
 	}
+	return 1;
 }
 
-void runTest(state waitState, int tck, uint64_t time)
+unsigned runTest(state waitState, int tck, uint64_t time)
 {
-	moveToState(waitState);
-	delayMicroseconds(time);
+	if (!moveToState(waitState))
+		return 0;
 	for (int i = 0; i < tck; i++) {
 		clockJTAG(0,0);
 	}
+	delayMicroseconds(time);
+	return 1;
 }
 
-void setEndStateDataRegister(char endState)
+unsigned setEndStateDataRegister(state endState)
 {
 	endStateDataRegister = endState;
+	return 1;
 }
 
-void setEndStateInstructionRegister(state endState)
+unsigned setEndStateInstructionRegister(state endState)
 {
 	endStateInstructionRegister = endState;
+	return 1;
 }
 
-void setFrequency(uint64_t frequency)
+unsigned setFrequency(uint64_t frequency)
 {
     uint64_t micros = 1000000/frequency;
     if (micros > 1)
@@ -714,11 +761,13 @@ void setFrequency(uint64_t frequency)
         sleepTime = 1;
         sleepTimeHalf = 1;
     }
+	return 1;
 }
 
-void setEndStateRunTest(state endState)
+unsigned setEndStateRunTest(state endState)
 {
 	endStateRunTest = endState;
+	return 1;
 }
 
 // Helper-Functions for parsing the data from the SVF-file
@@ -1029,7 +1078,7 @@ char *removeTabsAndNewline(char *input)
     return output;
 }
 
-void executeTask(char *commandString)
+unsigned executeTask(char *commandString)
 {
 	int bits = 0;
 	state commandState = RESET;
@@ -1040,61 +1089,92 @@ void executeTask(char *commandString)
 	uint64_t sleep = 0.0;
 	int clockcycles = 0;
     char *stateString;
+	int commandResult = 0;
+	if (TESTING_PC)
+		commandResult = 1;
 	if (strncmp(commandString, "HDR", 3) == 0)
 	{
 		if (commandString[3] != '0')
 		{
 			//TODO
+			commandResult = 1;
 		}
 		else
 		{
 			if (DEBUG)
 				printf("executing: HDR(%d)\n", bits);
 			if (!TESTING_PC)
-				setHeaderDataRegister(bits, NULL);
+				commandResult = setHeaderDataRegister(bits, NULL);
 		}
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING HDR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "HIR", 3) == 0)
 	{
 		if (commandString[3] != '0')
 		{
 			//TODO
+			commandResult = 1;
 		}
 		else
 		{
 			if (DEBUG)
 				printf("executing: HIR(%d)\n", bits);
 			if (!TESTING_PC)
-				setHeaderInstructionRegister(bits, NULL);
+				commandResult = setHeaderInstructionRegister(bits, NULL);
 		}
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING HIR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "TDR", 3) == 0)
 	{
 		if (commandString[3] != '0')
 		{
 			//TODO
+			commandResult = 1;
 		}
 		else
 		{
 			if (DEBUG)
 				printf("executing: TDR(%d)\n", bits);
 			if (!TESTING_PC)
-				setTailDataRegister(bits, NULL);
+				commandResult = setTailDataRegister(bits, NULL);
 		}
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING TDR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "TIR", 3) == 0)
 	{
 		if (commandString[3] != '0')
 		{
 			//TODO
+			commandResult = 1;
 		}
 		else
 		{
 			if (DEBUG)
 				printf("executing: TIR(%d)\n", bits);
 			if (!TESTING_PC)
-				setTailInstructionRegister(bits, NULL);
+				commandResult = setTailInstructionRegister(bits, NULL);
 		}
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING TIR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "RUNTEST", 7) == 0)
 	{
@@ -1151,7 +1231,13 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: RUNTEST(%s, %d, %lld)\n", stateToString(commandState), clockcycles, sleep);
 		if (!TESTING_PC)
-			runTest(commandState, clockcycles, sleep);
+			commandResult = runTest(commandState, clockcycles, sleep);
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING RUNTEST!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "SDR", 3) == 0)
 	{
@@ -1186,7 +1272,13 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: SDR(%d, %s, %s, %s)\n", bits, tdistring, tdostring, maskstring);
 		if (!TESTING_PC)
-			shiftDataRegister(bits, parseHexString(tdistring), parseHexString(tdostring), parseHexString(maskstring));
+			commandResult = shiftDataRegister(bits, parseHexString(tdistring), parseHexString(tdostring), parseHexString(maskstring));
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING SDR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "SIR", 3) == 0)
 	{
@@ -1221,7 +1313,13 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: SIR(%d, %s, %s, %s)\n", bits, tdistring, tdostring, maskstring);
 		if (!TESTING_PC)
-			shiftInstructionRegister(bits, parseHexString(tdistring), parseHexString(tdostring), parseHexString(maskstring));
+			commandResult = shiftInstructionRegister(bits, parseHexString(tdistring), parseHexString(tdostring), parseHexString(maskstring));
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING SIR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "STATE", 5) == 0)
 	{
@@ -1233,7 +1331,13 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: STATE(%s)\n", stateToString(commandState));
 		if (!TESTING_PC)
-			moveToState(commandState);
+			commandResult = moveToState(commandState);
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING STATE!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "ENDDR", 5) == 0)
 	{
@@ -1245,7 +1349,13 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: ENDDR(%s)\n", getSubstring(commandString, start, end));
 		if (!TESTING_PC)
-			setEndStateDataRegister(commandState);
+			commandResult = setEndStateDataRegister(commandState);
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING ENDDR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "ENDIR", 5) == 0)
 	{
@@ -1257,7 +1367,13 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: ENDIR(%s)\n", getSubstring(commandString, start, end));
 		if (!TESTING_PC)
-			setEndStateInstructionRegister(commandState);
+			commandResult = setEndStateInstructionRegister(commandState);
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING ENDIR!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "ENDSTATE", 8) == 0)
 	{
@@ -1269,7 +1385,13 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: ENDSTATE(%s)\n", getSubstring(commandString, start, end));
 		if (!TESTING_PC)
-			setEndStateRunTest(commandState);
+			commandResult = setEndStateRunTest(commandState);
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING ENDSTATE!\n");
+			return 0;
+		}
+		return 1;
 	}
 	else if (strncmp(commandString, "FREQUENCY", 9) == 0)
 	{
@@ -1280,8 +1402,16 @@ void executeTask(char *commandString)
 		if (DEBUG)
 			printf("executing: FREQUENCY(%lld), microDelay: %lld\n", frequency, (1000000/frequency));
 		if (!TESTING_PC)
-			setFrequency(frequency);
+			commandResult = setFrequency(frequency);
+		if (!commandResult)
+		{
+			printf("ERROR OCCURED DURING FREQUENCY!\n");
+			return 0;
+		}
+		return 1;
 	}
+	printf("ERROR: NOT A VALID COMMAND!");
+	return 0;
     free(commandString);
 }
 
@@ -1318,6 +1448,7 @@ int main(int argc, char **argv) {
 			{
                 if (findFirstOccurenceOfString(currentCommandString, "LOOP") != -1)
                 {
+					looping = 1;
                     int loopcount = 0;
                     int location = 0;
                     int loopcmdcount = 0;
@@ -1353,7 +1484,11 @@ int main(int argc, char **argv) {
                                 {
                                     char *currentLoopTask = getSubstring(currentCommandString, loopcmdpos[j], loopcmdpos[j+1]);
                                     executeTask(currentLoopTask);
+									if (!looping)
+										break;
                                 }
+								if(!looping)
+									break;
                             }
                             break;
                         }
@@ -1371,7 +1506,12 @@ int main(int argc, char **argv) {
                 else
                 {
     				//printf("%s\n", currentCommandString);
-    				executeTask(currentCommandString);
+    				if (!executeTask(currentCommandString))
+					{
+						printf("STOPPING EXECUTION!\n");
+						resetJTAG();
+						return 0;
+					}
     				currentCommandString = malloc(sizeof *currentCommandString * MAXCHAR);
                 }
 			}
@@ -1381,6 +1521,7 @@ int main(int argc, char **argv) {
     if (DEBUG)
         printf("COMPLETESLEEPTIME: %lf\n", completesleeptime/1000000);
 	printf("Programming finished\n");
+	resetJTAG();
 	if (!TESTING_PC)
 		stopGPIO();
 
@@ -1391,3 +1532,4 @@ int main(int argc, char **argv) {
     printf("Time elpased is %ld seconds and %ld micros\n", seconds, micros);
     return 1;
 }
+
